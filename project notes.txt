@@ -5,11 +5,10 @@ The player starts out by building logic gates then gradually moves on to more an
 As each level is completed, the player is given a part with the same function for use in other levels.
 For example, once the player has successfully built their own AND gate, they can just place AND gates directly into other levels without having to redo the design again.
 
-I gave up making levels recursive for favor of "data wires"
 
 Data wires: (yellow?)
 data wires are bundled wires for carrying 8(?) bits of data at a time.  
-When building the part, there are 8 input pins as usual.  These are labelled d0 - d7.
+There is an "expander" part that connects 8 normal pins to one "data" pin to allow 
 They are numbered such that the value of each pin dx is 2^x.  In other words, take 243:
 
 
@@ -18,4 +17,10 @@ x 1   1   1   1   0   0   1   1
 v 128 64  32  16  8   4   2   1
 
 Then, when the part is used in other constructions, all the digits get bundled up into one wire connected to a single pin labelled "data"
+
+
+players are designing their own parts, so levels are recursive!
+
+Once the player has a part designed, it can be added to the toolbox to effectively copy-paste into other levels as a single unit
+To make sure players have parts that can suitably do later levels, we also provide a "stock" solution for each part once the player has a design of their own
 
