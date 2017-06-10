@@ -36,7 +36,7 @@ public enum ConnectionType
 /// <summary>
 /// the building block of game levels, this class represents one cell in the level grid
 /// </summary>
-public class CellScript : BaseBehaviour, IPointerEnterHandler, IPointerExitHandler
+public class CellScript : BaseBehaviour, IPointerExitHandler
 {
     [VisibleWhen("showSettings")] public RawImage image;              //the image used to represent this cell
     [VisibleWhen("showSettings")] public Color    colorNotInSolution; //color to be used if the cell is not in the solution
@@ -49,7 +49,16 @@ public class CellScript : BaseBehaviour, IPointerEnterHandler, IPointerExitHandl
     private bool showSettings() { return Application.isPlaying == false; }
 
     //cell status
-    public CellStatus status; //state of this cell
+    [Show] public CellStatus status;                       //state of this cell
+    [Hide] public int gridX = 0;                           //x-coordinate of this cell on the grid
+    [Hide] public int gridY = 0;                           //y-coordinate of this cell on the grid
+
+    //convenience accessor of this cell on the level grid so it can be treated as a vector and for cleaner display in the inspector
+    [Show] public Vector2 gridCoordinates
+    {
+        get { return new Vector2(gridX, gridY); }
+        set { gridX = (int)value.x; gridY = (int)value.y; }
+    } 
 
     //connections to neighboring cells
     [OnChanged("UconnectionUpdated")] public ConnectionType connectionUp;
@@ -147,23 +156,15 @@ public class CellScript : BaseBehaviour, IPointerEnterHandler, IPointerExitHandl
     }
 
     /// <summary>
-    /// handles the onPointerEnter event.  If the mouse button is being held down, calls dragCrossedBorder to handle the user input
-    /// </summary>
-    /// <param name="eventData"></param>
-    public void OnPointerEnter(PointerEventData eventData)
-    {
-        if (Input.GetMouseButton(LEFT_MOUSE_BUTTON))
-            dragCrossedBorder( new Vector2( (eventData.position.x - transform.position.x), (eventData.position.y - transform.position.y) ), true );
-    }
-
-    /// <summary>
     /// handles the onPointerExit event.  If the mouse button is being held down, calls dragCrossedBorder to handle the user input
     /// </summary>
     /// <param name="eventData"></param>
     public void OnPointerExit(PointerEventData eventData)
     {
         if (Input.GetMouseButton(LEFT_MOUSE_BUTTON))
-            dragCrossedBorder( new Vector2( (eventData.position.x - transform.position.x), (eventData.position.y - transform.position.y) ), false );
+            dragCrossedBorder( new Vector2( (eventData.position.x - transform.position.x), (eventData.position.y - transform.position.y) ), false ); //if left button, user wants a normal wire
+        else if (Input.GetMouseButton(RIGHT_MOUSE_BUTTON))
+            dragCrossedBorder( new Vector2( (eventData.position.x - transform.position.x), (eventData.position.y - transform.position.y) ), true  ); //if right button, user wants a data wire
     }
 
     /// <summary>
@@ -171,9 +172,9 @@ public class CellScript : BaseBehaviour, IPointerEnterHandler, IPointerExitHandl
     /// Identifies the connection the user wants to change and calls userAttemptedConnection appropriately
     /// </summary>
     /// <param name="eventPos">localPosition of where the mouse crossed the border</param>
-    /// <param name="isEntering">true if the mouse entered this cell, and false if the mouse left this cell.</param>
+    /// <param name="wantsDataWire">Whether or not the user wants a data wire</param>
     /// <seealso cref="userAttemptedConnection"/>
-    private void dragCrossedBorder(Vector2 eventPos, bool isEntering)
+    private void dragCrossedBorder(Vector2 eventPos, bool wantsDataWire)
     {
         //test which borders the mouse is near
         Rect rect = GetComponent<RectTransform>().rect;
@@ -195,20 +196,17 @@ public class CellScript : BaseBehaviour, IPointerEnterHandler, IPointerExitHandl
 
         //if we are near two edges, this is a "dead zone" and we want to ignore this input as ambiguous
         if (bordersNearCursor == 2)
-        {
-            Debug.Log("Ambiguous");
             return;
-        }
 
-        //mouse is only near one border.  Update that connection
+        //mouse is only near one border.  Attempt to update that connection
         if (nearLeft)
-            userAttemptedConnection(ConnectionDirection.LEFT, ref connectionLeft);
+            userAttemptedConnection(ConnectionDirection.LEFT,  ref connectionLeft,  wantsDataWire);
         else if (nearRight)
-            userAttemptedConnection(ConnectionDirection.RIGHT, ref connectionRight);
+            userAttemptedConnection(ConnectionDirection.RIGHT, ref connectionRight, wantsDataWire);
         else if (nearTop)
-            userAttemptedConnection(ConnectionDirection.UP, ref connectionUp);
+            userAttemptedConnection(ConnectionDirection.UP,    ref connectionUp,    wantsDataWire);
         else
-            userAttemptedConnection(ConnectionDirection.DOWN, ref connectionDown);
+            userAttemptedConnection(ConnectionDirection.DOWN,  ref connectionDown,  wantsDataWire);
     }
 
     /// <summary>
@@ -216,24 +214,160 @@ public class CellScript : BaseBehaviour, IPointerEnterHandler, IPointerExitHandl
     /// </summary>
     /// <param name="direction">direction of the connection to attempt updating</param>
     /// <param name="connection">reference to the connection to be updated</param>
-    private void userAttemptedConnection(ConnectionDirection direction, ref ConnectionType connection)
+    /// <param name="wantsDataWire">Whether or not the user wants a data wire</param>
+    private void userAttemptedConnection(ConnectionDirection direction, ref ConnectionType connection, bool wantsDataWire)
     {
+        ConnectionType desiredConnectionType;
+
+        //figure out what kind of connection this cell wants to make
         switch (connection)
         {
+
+            case ConnectionType.BLOCKED:
+                return; //ignore attempts to connect on blocked pins
+
+            case ConnectionType.WIRE_PIN:
+            case ConnectionType.DATA_PIN:
+                return; //ignore attempts to modify pin connections, as this is handled by moving parts around
+
+            //if this cell does not have a type, base it on what the user wants
             case ConnectionType.NONE:
-                connection = ConnectionType.WIRE;
-                connectionUpdated(direction, connection);
+                desiredConnectionType = wantsDataWire ? ConnectionType.DATA : ConnectionType.WIRE; //whether the user wants a WIRE connection or a DATA connection
                 break;
 
+            //only break normal wire connections if the user wants a normal wire
             case ConnectionType.WIRE:
+                if (wantsDataWire)
+                    return;
+                else
+                    desiredConnectionType = ConnectionType.NONE;
+
+                break;
+
+            //only break data wire connections if hte user wants a data wire
             case ConnectionType.DATA:
-                connection = ConnectionType.NONE;
-                connectionUpdated(direction, connection);
+                if (wantsDataWire)
+                    desiredConnectionType = ConnectionType.NONE;
+                else
+                    return;
+
                 break;
 
             default:
-                Debug.LogWarning("userAttemptedConnection doesnt know how to update a connection of this type!");
+                Debug.LogWarning("userAttemptedConnection doesnt know how to update a connection of this type!" );
+                return;
+        }
+
+        //we know what kind of connection we want to make, and this cell allows it.  Try to get the target cell to update
+        CellScript targetCell = findNeighbor(direction);
+
+        if (targetCell == null)
+            return; //the target cell does not exist, so we cannot connect to it
+
+        //we have the target cell and the type of connection we want to make.  Attempt to establish it
+        if (targetCell.incomingConnection(desiredConnectionType, direction.Inverse()))
+        {
+            //connection accepted.  update it here.
+            connection = desiredConnectionType;
+            connectionUpdated(direction, connection);
+        }
+        else
+        {
+            return; //connection refused.  
+        }
+    }
+
+    /// <summary>
+    /// call this if you want to connect something to this cell.  
+    /// If the connection can be made, this cell is updated accordingly and true is returned.  
+    /// If the connection is refused for any reason, nothing changes and this returns false.
+    /// </summary>
+    /// <param name="desiredConnectionType">connection type of the incoming connection</param>
+    /// <param name="direction">direction the connection is coming from</param>
+    /// <returns></returns>
+    public bool incomingConnection(ConnectionType desiredConnectionType, ConnectionDirection direction)
+    {
+        //see if the connection should be rejected based on status of the cell
+        switch (status)
+        {
+            //automatically accept connections if there is nothing in this cell
+            case CellStatus.EMPTY:
+            case CellStatus.NOT_IN_SOLUTION:
                 break;
+
+            //refuse data connections if this cell carries normal wires
+            case CellStatus.WIRE:
+                if (desiredConnectionType == ConnectionType.DATA || desiredConnectionType == ConnectionType.DATA_PIN)
+                    return false;
+                break;
+
+            //refuse wire connections if this cell carries data
+            case CellStatus.DATA:
+                if (desiredConnectionType == ConnectionType.WIRE || desiredConnectionType == ConnectionType.WIRE_PIN)
+                    return false;
+                break;
+
+            default:
+                Debug.LogError("CellScript.incomingConnection() doesnt know how to handle requests of type " + desiredConnectionType);
+                return false;
+        }
+
+        //status of the cell did not forbid the connection.  Find which connection should be updated.
+        ref ConnectionType connectionToUpdate;
+        switch(direction)
+        {
+            case ConnectionDirection.UP:    connectionToUpdate = connectionUp;    break;
+            case ConnectionDirection.RIGHT: connectionToUpdate = connectionRight; break;
+            case ConnectionDirection.LEFT:  connectionToUpdate = connectionLeft;  break;
+            case ConnectionDirection.DOWN:  connectionToUpdate = connectionDown;  break;
+            default: Debug.LogError("CellScript.incomingConnection() doesnt recognize direction " + direction); return false;
+        }
+
+        //refuse connection if that side is blocked
+        if (connectionToUpdate == ConnectionType.BLOCKED)
+            return false;
+
+        //connection accepted
+        connectionToUpdate = desiredConnectionType;
+        connectionUpdated(direction, connectionToUpdate);
+    }
+
+    /// <summary>
+    /// finds the cell the given direction connects to, if any.  If there is no cell in that direction, returns null
+    /// </summary>
+    /// <param name="direction">the direction to search for a neighbor</param>
+    /// <returns></returns>
+    public CellScript findNeighbor(ConnectionDirection direction)
+    {
+        switch (direction)
+        {
+            case ConnectionDirection.UP:
+                if (gridY <= 0)                                             //if there is no cell in this direction
+                    return null;                                            //return null
+                else                                                        //otherwise
+                    return LevelGridScript.instance.grid[gridX, gridY - 1]; //return the cell in this direction
+
+            case ConnectionDirection.RIGHT:
+                if (gridX + 1 >= LevelGridScript.instance.levelWidth)       //if there is no cell in this direction
+                    return null;                                            //return null
+                else                                                        //otherwise
+                    return LevelGridScript.instance.grid[gridX + 1, gridY]; //return the cell in this direction
+
+            case ConnectionDirection.DOWN:
+                if (gridY + 1 >= LevelGridScript.instance.levelHeight)      //if there is no cell in this direction
+                    return null;                                            //return null
+                else                                                        //otherwise
+                    return LevelGridScript.instance.grid[gridX, gridY + 1]; //return the cell in this direction
+
+            case ConnectionDirection.LEFT:
+                if (gridX <= 0)                                             //if there is no cell in this direction
+                    return null;                                            //return null
+                else                                                        //otherwise
+                    return LevelGridScript.instance.grid[gridX - 1, gridY]; //return the cell in this direction
+
+            default:
+                Debug.LogError("CellScript.findNeighbor() doesnt recognize the direction " + direction);
+                return null;
         }
     }
 }
