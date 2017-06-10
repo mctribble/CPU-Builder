@@ -42,6 +42,7 @@ public class CellScript : BaseBehaviour, IPointerExitHandler
     [VisibleWhen("showSettings")] public Color    colorNotInSolution; //color to be used if the cell is not in the solution
     [VisibleWhen("showSettings")] public Color    colorWire;          //color to be used if the cell has normal wire connections
     [VisibleWhen("showSettings")] public Color    colorData;          //color to be used if the cell has data wire connections
+    [VisibleWhen("showSettings")] public Color    colorEmpty;         //color to be used if the cell is empty, but still in the solution
     [VisibleWhen("showSettings")] public Color    colorDefault;       //color to be used if none of the above colors apply
     [VisibleWhen("showSettings")] public float    deadZone;           //size of the areas in each corner of the cell to ignore mouse drags in because the intended connection would be ambiguous.
 
@@ -88,7 +89,7 @@ public class CellScript : BaseBehaviour, IPointerExitHandler
         if ((newValue == ConnectionType.WIRE && status == CellStatus.DATA) ||
             (newValue == ConnectionType.DATA && status == CellStatus.WIRE))
         {
-            throw new InvalidOperationException("cannot make connection: conflicting wire types.");
+            throw new InvalidOperationException("invalid connection made: conflicting wire types.");
         }
 
         //if this cell was previously not in the solution, expand the solution
@@ -115,6 +116,16 @@ public class CellScript : BaseBehaviour, IPointerExitHandler
             }
         }
 
+        if ( (newValue == ConnectionType.NONE || newValue == ConnectionType.BLOCKED) &&               //if a connection was removed and
+             (connectionUp == ConnectionType.NONE || connectionUp == ConnectionType.BLOCKED) &&       //if connectionUp    is empty and 
+             (connectionRight == ConnectionType.NONE || connectionRight == ConnectionType.BLOCKED) && //if connectionRight is empty and 
+             (connectionDown == ConnectionType.NONE || connectionDown == ConnectionType.BLOCKED) &&   //if connectionDown  is empty and 
+             (connectionLeft == ConnectionType.NONE || connectionLeft == ConnectionType.BLOCKED))     //if connectionLeft  is empty  
+        {
+            status = CellStatus.EMPTY; //then the cell is now empty.  update status accordingly.
+            //TODO: remove cells from the solution if the bounding box shrank as a result of this change
+        }
+
         //update the sprite
         updateSprite();
     }
@@ -129,6 +140,11 @@ public class CellScript : BaseBehaviour, IPointerExitHandler
             case CellStatus.NOT_IN_SOLUTION:
                 image.uvRect = new Rect(0.0f, 0.0f, 0.25f, 0.25f);
                 image.color = colorNotInSolution;
+                break;
+
+            case CellStatus.EMPTY:
+                image.uvRect = new Rect(0.0f, 0.0f, 0.25f, 0.25f);
+                image.color = colorEmpty;
                 break;
 
             case CellStatus.WIRE:
@@ -151,6 +167,10 @@ public class CellScript : BaseBehaviour, IPointerExitHandler
                 else
                     image.color = colorData;
 
+                break;
+
+            default:
+                Debug.LogWarning("CellScript.updateSprite() doesnt know how to update this kind of cell.");
                 break;
         }
     }
@@ -230,7 +250,7 @@ public class CellScript : BaseBehaviour, IPointerExitHandler
             case ConnectionType.DATA_PIN:
                 return; //ignore attempts to modify pin connections, as this is handled by moving parts around
 
-            //if this cell does not have a type, base it on what the user wants
+            //if this connection does not have a type, base it on what the user wants
             case ConnectionType.NONE:
                 desiredConnectionType = wantsDataWire ? ConnectionType.DATA : ConnectionType.WIRE; //whether the user wants a WIRE connection or a DATA connection
                 break;
@@ -244,7 +264,7 @@ public class CellScript : BaseBehaviour, IPointerExitHandler
 
                 break;
 
-            //only break data wire connections if hte user wants a data wire
+            //only break data wire connections if the user wants a data wire
             case ConnectionType.DATA:
                 if (wantsDataWire)
                     desiredConnectionType = ConnectionType.NONE;
@@ -255,6 +275,31 @@ public class CellScript : BaseBehaviour, IPointerExitHandler
 
             default:
                 Debug.LogWarning("userAttemptedConnection doesnt know how to update a connection of this type!" );
+                return;
+        }
+
+        //reject if the cell status conflicts with the desired connection type
+        switch (status)
+        {
+            //no conflict if cell is empty
+            case CellStatus.EMPTY:
+            case CellStatus.NOT_IN_SOLUTION:
+                break; 
+
+            //no wire connections if the cell carries data
+            case CellStatus.DATA:
+                if (desiredConnectionType == ConnectionType.WIRE || desiredConnectionType == ConnectionType.WIRE_PIN)
+                    return; 
+                break;
+
+            //no data connections if the cell carries normal wires
+            case CellStatus.WIRE:
+                if (desiredConnectionType == ConnectionType.DATA || desiredConnectionType == ConnectionType.DATA_PIN)
+                    return;
+                break;
+
+            default:
+                Debug.LogWarning("userAttemptedConnection doesnt know how to update a cell of this type!");
                 return;
         }
 
@@ -312,24 +357,39 @@ public class CellScript : BaseBehaviour, IPointerExitHandler
                 return false;
         }
 
-        //status of the cell did not forbid the connection.  Find which connection should be updated.
-        ref ConnectionType connectionToUpdate;
+        //status of the cell did not forbid the connection.  Find which connection should be updated and update it, unless that side is blocked
         switch(direction)
         {
-            case ConnectionDirection.UP:    connectionToUpdate = connectionUp;    break;
-            case ConnectionDirection.RIGHT: connectionToUpdate = connectionRight; break;
-            case ConnectionDirection.LEFT:  connectionToUpdate = connectionLeft;  break;
-            case ConnectionDirection.DOWN:  connectionToUpdate = connectionDown;  break;
+            case ConnectionDirection.UP:
+                if (connectionUp == ConnectionType.BLOCKED)
+                    return false;
+                connectionUp = desiredConnectionType;
+                connectionUpdated(direction, connectionUp);
+                return true;
+
+            case ConnectionDirection.RIGHT:
+                if (connectionRight == ConnectionType.BLOCKED)
+                    return false;
+                connectionRight = desiredConnectionType;
+                connectionUpdated(direction, connectionRight);
+                return true;
+
+            case ConnectionDirection.LEFT:
+                if (connectionLeft == ConnectionType.BLOCKED)
+                    return false;
+                connectionLeft = desiredConnectionType;
+                connectionUpdated(direction, connectionLeft);
+                return true;
+
+            case ConnectionDirection.DOWN:
+                if (connectionDown == ConnectionType.BLOCKED)
+                    return false;
+                connectionDown = desiredConnectionType;
+                connectionUpdated(direction, connectionDown);
+                return true;
+
             default: Debug.LogError("CellScript.incomingConnection() doesnt recognize direction " + direction); return false;
         }
-
-        //refuse connection if that side is blocked
-        if (connectionToUpdate == ConnectionType.BLOCKED)
-            return false;
-
-        //connection accepted
-        connectionToUpdate = desiredConnectionType;
-        connectionUpdated(direction, connectionToUpdate);
     }
 
     /// <summary>
